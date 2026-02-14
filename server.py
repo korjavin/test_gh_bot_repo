@@ -3,6 +3,8 @@ import socketserver
 import os
 import urllib.parse
 import subprocess
+import pickle
+import base64
 
 PORT = 8000
 WEB_ROOT = os.path.join(os.getcwd(), 'public')
@@ -40,6 +42,31 @@ class VulnerableHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"Missing 'host' parameter")
             return
 
+        # Vulnerability 3: Reflected XSS
+        if path == '/greet':
+            name = query.get('name', ['Guest'])[0]
+            # VULNERABLE: Reflecting input directly into HTML
+            html = f"<html><body><h1>Hello, {name}!</h1></body></html>"
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(html.encode())
+            return
+
+        # Vulnerability 4: Broken Access Control / Hardcoded Credentials
+        if path == '/admin':
+             # Check for a specific header "X-Admin-Token"
+             token = self.headers.get('X-Admin-Token')
+             if token == 'admin123': # VULNERABLE: Hardcoded token
+                 self.send_response(200)
+                 self.end_headers()
+                 self.wfile.write(b"Welcome Admin! Here is the flag: FLAG{hardcoded_creds}")
+             else:
+                 self.send_response(403)
+                 self.end_headers()
+                 self.wfile.write(b"Access Denied")
+             return
+
         # Vulnerability 2: Directory Traversal
         # Intentionally flawed path handling
 
@@ -66,6 +93,28 @@ class VulnerableHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
             self.wfile.write(str(e).encode())
+
+    def do_POST(self):
+        # Vulnerability 5: Insecure Deserialization
+        if self.path == '/process_data':
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_length)
+                # VULNERABLE: Unpickling untrusted data
+                # Expecting base64 encoded pickle data
+                data = pickle.loads(base64.b64decode(post_data))
+                response = f"Processed data: {data}"
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(response.encode())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not Found")
 
 if __name__ == "__main__":
     # Ensure public directory exists
