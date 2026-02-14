@@ -5,9 +5,18 @@ import urllib.parse
 import subprocess
 import pickle
 import base64
+import sqlite3
+import urllib.request
 
 PORT = 8000
 WEB_ROOT = os.path.join(os.getcwd(), 'public')
+
+# Setup database
+conn = sqlite3.connect(':memory:', check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)''')
+c.execute("INSERT INTO users (username, password) VALUES ('admin', 'supersecret')")
+conn.commit()
 
 class VulnerableHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -66,6 +75,68 @@ class VulnerableHandler(http.server.BaseHTTPRequestHandler):
                  self.end_headers()
                  self.wfile.write(b"Access Denied")
              return
+
+        # Vulnerability 6: SQL Injection
+        if path == '/login':
+            username = query.get('username', [''])[0]
+            if username:
+                # VULNERABLE: SQL Injection
+                sql = f"SELECT * FROM users WHERE username = '{username}'"
+                try:
+                    cursor = conn.execute(sql)
+                    user = cursor.fetchone()
+                    if user:
+                        self.send_response(200)
+                        self.end_headers()
+                        self.wfile.write(f"Logged in as {user[1]}".encode())
+                    else:
+                        self.send_response(401)
+                        self.end_headers()
+                        self.wfile.write(b"Login failed")
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+            else:
+                 self.send_response(400)
+                 self.end_headers()
+                 self.wfile.write(b"Missing username")
+            return
+
+        # Vulnerability 7: SSRF
+        if path == '/proxy':
+            url = query.get('url', [''])[0]
+            if url:
+                try:
+                    # VULNERABLE: SSRF
+                    with urllib.request.urlopen(url) as response:
+                        content = response.read()
+                        self.send_response(200)
+                        self.end_headers()
+                        self.wfile.write(content)
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+            else:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing url")
+            return
+
+        # Vulnerability 8: Open Redirect
+        if path == '/redirect':
+            url = query.get('url', [''])[0]
+            if url:
+                 # VULNERABLE: Open Redirect
+                 self.send_response(302)
+                 self.send_header('Location', url)
+                 self.end_headers()
+            else:
+                 self.send_response(400)
+                 self.end_headers()
+                 self.wfile.write(b"Missing url")
+            return
 
         # Vulnerability 2: Directory Traversal
         # Intentionally flawed path handling
