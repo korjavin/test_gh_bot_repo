@@ -5,15 +5,91 @@ import urllib.parse
 import subprocess
 import pickle
 import base64
+import sqlite3
+import urllib.request
 
 PORT = 8000
 WEB_ROOT = os.path.join(os.getcwd(), 'public')
+
+def init_db():
+    conn = sqlite3.connect(':memory:', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE users (username text, password text)''')
+    c.execute("INSERT INTO users VALUES ('admin', 'admin123')")
+    c.execute("INSERT INTO users VALUES ('user', 'user123')")
+    conn.commit()
+    return conn
+
+DB_CONN = init_db()
 
 class VulnerableHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urllib.parse.urlparse(self.path)
         path = parsed_path.path
         query = urllib.parse.parse_qs(parsed_path.query)
+
+        # Vulnerability 6: SQL Injection
+        if path == '/login':
+            username = query.get('username', [''])[0]
+            if username:
+                # VULNERABLE: SQL Injection
+                try:
+                    c = DB_CONN.cursor()
+                    # Using f-string to construct query directly from user input
+                    c.execute(f"SELECT * FROM users WHERE username = '{username}'")
+                    user = c.fetchone()
+                    if user:
+                        self.send_response(200)
+                        self.end_headers()
+                        self.wfile.write(b"Login Successful")
+                    else:
+                        self.send_response(401)
+                        self.end_headers()
+                        self.wfile.write(b"Login Failed")
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+            else:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing 'username' parameter")
+            return
+
+        # Vulnerability 7: SSRF
+        if path == '/proxy':
+            url = query.get('url', [''])[0]
+            if url:
+                # VULNERABLE: SSRF
+                try:
+                    with urllib.request.urlopen(url) as response:
+                        content = response.read()
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(content)
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+            else:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing 'url' parameter")
+            return
+
+        # Vulnerability 8: Open Redirect
+        if path == '/redirect':
+            url = query.get('url', [''])[0]
+            if url:
+                # VULNERABLE: Open Redirect
+                self.send_response(302)
+                self.send_header('Location', url)
+                self.end_headers()
+            else:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Missing 'url' parameter")
+            return
 
         # Vulnerability 1: Command Injection
         if path == '/ping':
